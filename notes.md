@@ -176,3 +176,180 @@ https://auth0.com/docs/get-started/authentication-and-authorization-flow/authori
 
 https://damienbod.com/
 
+new access token 30 sec before expires!!
+
+https://auth0.com/blog/the-backend-for-frontend-pattern-bff/
+
+## Testing
+Unit Testing
+Shallow Testing
+Integration Testing
+End to End Testing
+
+smallest test as possible
+write it readable and mocking friendly
+clean components
+most important part
+as less logic as possible
+
+playright instead of cypress
+ng-mocks is a good lib
+
+## State Management with NgRx Signal Store
+Lightweight
+functional based
+extensible
+optional rxjs
+
+A SignalStore is created using the signalStore function. This function accepts a sequence of store features. Through the combination of store features, the SignalStore gains state, properties, and methods, allowing for a flexible and extensible store implementation. Based on the utilized features, the signalStore function returns an injectable service that can be provided and injected where needed.
+
+The withState feature is used to add state slices to the SignalStore. This feature accepts initial state as an input argument. As with signalState, the state's type must be a record/object literal.
+```ts
+import { signalStore, withState } from '@ngrx/signals';
+import { Book } from './book';
+
+type BookSearchState = {
+  books: Book[];
+  isLoading: boolean;
+  filter: { query: string; order: 'asc' | 'desc' };
+};
+
+const initialState: BookSearchState = {
+  books: [],
+  isLoading: false,
+  filter: { query: '', order: 'asc' },
+};
+
+export const BookSearchStore = signalStore(
+  withState(initialState)
+);
+```
+
+Methods can be added to the store using the withMethods feature. This feature takes a factory function as an input argument and returns a dictionary of methods. Similar to withComputed, the withMethods factory is also executed within the injection context. The store instance, including previously defined state signals, properties, and methods, is accessible through the factory input.
+```ts
+import { computed } from '@angular/core';
+import {
+  patchState,
+  signalStore,
+  withComputed,
+  withMethods,
+  withState,
+} from '@ngrx/signals';
+import { Book } from './book';
+
+type BookSearchState = { /* ... */ };
+
+const initialState: BookSearchState = { /* ... */ };
+
+export const BookSearchStore = signalStore(
+  withState(initialState),
+  withComputed(/* ... */),
+  // 👇 Accessing a store instance with previously defined state signals,
+  // properties, and methods.
+  withMethods((store) => ({
+    updateQuery(query: string): void {
+      // 👇 Updating state using the `patchState` function.
+      patchState(store, (state) => ({ filter: { ...state.filter, query } }));
+    },
+    updateOrder(order: 'asc' | 'desc'): void {
+      patchState(store, (state) => ({ filter: { ...state.filter, order } }));
+    },
+  }))
+);
+```
+
+In addition to methods for updating state, the withMethods feature can also be used to create methods for performing side effects. Asynchronous side effects can be executed using Promise-based APIs, as demonstrated below.
+```ts
+import { computed, inject } from '@angular/core';
+import { patchState, signalStore, /* ... */ } from '@ngrx/signals';
+import { BooksService } from './books-service';
+import { Book } from './book';
+
+type BookSearchState = { /* ... */ };
+
+const initialState: BookSearchState = { /* ... */ };
+
+export const BookSearchStore = signalStore(
+  withState(initialState),
+  withComputed(/* ... */),
+  // 👇 `BooksService` can be injected within the `withMethods` factory.
+  withMethods((store, booksService = inject(BooksService)) => ({
+    /* ... */
+    // 👇 Defining a method to load all books.
+    async loadAll(): Promise<void> {
+      patchState(store, { isLoading: true });
+
+      const books = await booksService.getAll();
+      patchState(store, { books, isLoading: false });
+    },
+  }))
+);
+```
+
+The final BookSearchStore implementation with state, computed signals, and methods from this guide is shown below.
+```ts
+import { computed, inject } from '@angular/core';
+import { debounceTime, distinctUntilChanged, pipe, switchMap, tap } from 'rxjs';
+import {
+  patchState,
+  signalStore,
+  withComputed,
+  withMethods,
+  withState,
+} from '@ngrx/signals';
+import { rxMethod } from '@ngrx/signals/rxjs-interop';
+import { tapResponse } from '@ngrx/operators';
+import { BooksService } from './books-service';
+import { Book } from './book';
+
+type BookSearchState = {
+  books: Book[];
+  isLoading: boolean;
+  filter: { query: string; order: 'asc' | 'desc' };
+};
+
+const initialState: BookSearchState = {
+  books: [],
+  isLoading: false,
+  filter: { query: '', order: 'asc' },
+};
+
+export const BookSearchStore = signalStore(
+  withState(initialState),
+  withComputed(({ books, filter }) => ({
+    booksCount: computed(() => books().length),
+    sortedBooks: computed(() => {
+      const direction = filter.order() === 'asc' ? 1 : -1;
+
+      return books().toSorted((a, b) =>
+        direction * a.title.localeCompare(b.title)
+      );
+    }), 
+  })),
+  withMethods((store, booksService = inject(BooksService)) => ({
+    updateQuery(query: string): void {
+      patchState(store, (state) => ({ filter: { ...state.filter, query } }));
+    },
+    updateOrder(order: 'asc' | 'desc'): void {
+      patchState(store, (state) => ({ filter: { ...state.filter, order } }));
+    },
+    loadByQuery: rxMethod<string>(
+      pipe(
+        debounceTime(300),
+        distinctUntilChanged(),
+        tap(() => patchState(store, { isLoading: true })),
+        switchMap((query) => {
+          return booksService.getByQuery(query).pipe(
+            tapResponse({
+              next: (books) => patchState(store, { books }),
+              error: console.error,
+              finalize: () => patchState(store, { isLoading: false }),
+            })
+          );
+        })
+      )
+    ),
+  }))
+);
+```
+
